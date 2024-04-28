@@ -8,6 +8,7 @@ os/src/link_app.S
 os/last-*
 os/Cargo.lock
 os/.gdb_history
+os/riscv64-unknown-elf-gdb
 user/build
 user/target/*
 user/.idea/*
