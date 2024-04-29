@@ -63,6 +63,23 @@ impl MemorySet {
             None,
         );
     }
+    ///ch4: 删除页框
+    pub fn delete_framed_area(
+        &mut self,
+        start_va:VirtAddr,
+        end_va:VirtAddr,
+    ){
+        let start_page=start_va.floor();
+        let end_page=end_va.ceil();
+        let mut map_area=None;
+        for area in self.areas.iter_mut() {
+            if area.vpn_range.get_start() == start_page && area.vpn_range.get_end() == end_page {
+                map_area = Some(area);
+                break;
+            }
+        }
+        map_area.unwrap().unmap(&mut self.page_table);
+    }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {

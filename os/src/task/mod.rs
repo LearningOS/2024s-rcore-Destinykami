@@ -14,7 +14,9 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VPNRange, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -46,6 +48,16 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+}
+///task_info
+#[allow(dead_code)]
+pub struct TaskInfoTMP {
+    /// Task status in it's life cycle
+    pub status: TaskStatus,
+    /// The numbers of syscall called by task
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    /// Total running time of task
+    pub time: usize,
 }
 
 lazy_static! {
@@ -153,6 +165,63 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    ///获取当前任务
+    pub fn get_current_task(&self)->TaskInfoTMP{
+        let inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        let tcb=&inner.tasks[cur_task];
+        let taskinfo=TaskInfoTMP{
+            status:TaskStatus::Running,
+            syscall_times:tcb.syscall_times,
+            time:tcb.start_time,
+        };
+        taskinfo
+    }
+    ///增加系统调用次数
+    fn inc_syscall_times(&self,syscall_id:usize){
+        let mut inner=self.inner.exclusive_access();
+        let cur_task=inner.current_task;
+        inner.tasks[cur_task].syscall_times[syscall_id]+=1;
+
+    }
+    ///申请内存
+    fn mmap(&self,start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        let tcb=&mut inner.tasks[cur_task];
+        let start_va=VirtAddr::from(start);
+        let end_va=VirtAddr::from(start+len);
+        //检查虚拟地址范围内是否范围内有映射过的页
+        for virt_page in VPNRange::new(start_va.floor(),end_va.ceil()){
+            if let Some(pte)=tcb.memory_set.translate(virt_page){
+                if pte.is_valid(){
+                    return -1;
+                }
+            }
+        }
+        let permission=MapPermission::from_bits((port as u8)<<1).unwrap()| MapPermission::U; //为什么要左移一位
+        tcb.memory_set.insert_framed_area(start_va, end_va, permission);
+        
+        0
+    }
+    ///取消映射
+    pub fn ummap(&self,start: usize, len: usize)->isize{
+        let mut inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        let tcb=&mut inner.tasks[cur_task];
+        let start_va=VirtAddr::from(start);
+        let end_va=VirtAddr::from(start+len);
+        //检查虚拟地址范围内是否范围内有未映射过的页
+        for virt_page in VPNRange::new(start_va.floor(),end_va.ceil()){
+            if let Some(pte)=tcb.memory_set.translate(virt_page){
+                if !pte.is_valid(){
+                    return -1;
+                }
+            }
+        }
+        tcb.memory_set.delete_framed_area(start_va, end_va);
+        0
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +270,21 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+///获取当前任务
+pub fn get_current_task()->TaskInfoTMP{
+    TASK_MANAGER.get_current_task()
+}
+///增加系统调用次数
+pub fn inc_syscall_times(syscall_id:usize){
+    TASK_MANAGER.inc_syscall_times(syscall_id);
+}
+///申请内存
+pub fn mmap(start: usize, len: usize, port: usize)->isize{
+    TASK_MANAGER.mmap(start,len,port)
+}
+///取消内存
+pub fn ummap(start: usize,len: usize)->isize{
+    TASK_MANAGER.ummap(start,len)
 }
