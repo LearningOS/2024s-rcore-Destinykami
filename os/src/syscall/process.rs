@@ -2,13 +2,13 @@
 use alloc::sync::Arc;
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     loader::get_app_data_by_name,
     mm::{translated_refmut, translated_str},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
-    },
+    }, timer::{get_time_ms, get_time_us},
 };
 
 #[repr(C)]
@@ -117,41 +117,64 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token=current_user_token();
+    //mm进行了增强，所以ch4中手动进行虚拟地址转换为物理地址，再用get_mut获取引用可换为这个
+    //再想想，ch4是不是可以把ch5的mm复制过去来过- - 
+    let us=get_time_us();
+    let p_ts:&mut TimeVal=translated_refmut(token, ts); 
+    *p_ts=TimeVal{
+        sec:us/1_000_000,
+        usec:us,
+    };
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
+pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     trace!(
         "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    let token=current_user_token();
+    let p_ti:&mut TaskInfo=translated_refmut(token, ti);
+    (*p_ti).status=inner.task_status;
+    (*p_ti).syscall_times=inner.syscall_times;
+    (*p_ti).time=get_time_ms()-inner.start_time;
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_mmap",
         current_task().unwrap().pid.0
     );
-    -1
+    //port除了后三位之外无效且必须为0,start按页号对齐
+    if start%PAGE_SIZE!=0 || port&(!(0x7))!=0 ||port & 0x7 == 0 {
+        return -1; 
+    }
+    current_task().unwrap().mmap(start,len,port)
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
+pub fn sys_munmap(start: usize, len: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_munmap",
         current_task().unwrap().pid.0
     );
-    -1
+    if start %  PAGE_SIZE != 0 {
+        return -1;
+    }
+    current_task().unwrap().ummap(start, len)
 }
 
 /// change data segment size
@@ -166,12 +189,22 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token=current_user_token();
+    let path=translated_str(token, path);
+    if let Some(data)=get_app_data_by_name(&path){
+        let task=current_task().unwrap().my_spawn(data);
+        let pid=task.getpid();
+        add_task(task);
+        pid as isize
+    }
+    else{
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
