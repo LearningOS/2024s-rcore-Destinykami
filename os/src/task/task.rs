@@ -78,6 +78,8 @@ pub struct TaskControlBlockInner {
     pub syscall_times:[u32;MAX_SYSCALL_NUM],
     /// time
     pub start_time:usize,
+    ///优先级
+    pub priority:isize,
 }
 
 impl TaskControlBlockInner {
@@ -130,6 +132,7 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     start_time:get_time_ms(),
                     syscall_times:[0;MAX_SYSCALL_NUM],
+                    priority:16,
                 })
             },
         };
@@ -205,6 +208,7 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     start_time:get_time_ms(),
                     syscall_times:[0;MAX_SYSCALL_NUM],
+                    priority:16,
                 })
             },
         });
@@ -325,6 +329,7 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     start_time:get_time_ms(),
                     syscall_times:[0;MAX_SYSCALL_NUM],
+                    priority:16,
                 })
             },
         });
@@ -345,6 +350,11 @@ impl TaskControlBlock {
         // **** release child PCB
         // ---- release parent PCB
 
+    }
+    ///设置优先级
+    pub fn set_priority(&self,prio:isize){
+        let mut inner=self.inner.exclusive_access();
+        inner.priority=prio;
     }
 }
 
