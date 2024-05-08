@@ -183,4 +183,117 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+    /// 判断是否是目录
+    pub fn is_dir(&self) -> bool{
+        let _fs = self.fs.lock();
+        self.read_disk_inode(|disk_inode|{
+            disk_inode.is_dir()
+        })
+    }
+    /// get inode id
+    pub fn inode_id(&self) -> u32{
+        let fs = self.fs.lock();
+        fs.get_inode_id(self.block_id,self.block_offset)
+    }
+
+    /// 链接数
+    pub fn linknum(&self,inode_id: u32) -> u32 {
+        let _fs = self.fs.lock();
+        self.read_disk_inode(|disk_inode|{
+            let mut link_num = 0;
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    disk_inode.read_at(
+                        DIRENT_SZ * i, 
+                        dirent.as_bytes_mut(), 
+                        &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.inode_id() == inode_id {
+                    link_num += 1;
+                }
+            }
+            link_num
+        })
+    }
+
+    ///创建硬链接
+    pub fn link_at(&self,old_path:&str,new_path:&str)->isize{
+        let mut fs = self.fs.lock();
+        self.modify_disk_inode(|root_inode|{
+            //找到旧路径对应的inode
+            if let Some(old_inode_id)=self.find_inode_id(old_path, root_inode){
+                let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                let new_size = (file_count + 1) * DIRENT_SZ;
+                // increase size
+                self.increase_size(new_size as u32, root_inode, &mut fs);
+                // write dirent
+                let dirent = DirEntry::new(new_path, old_inode_id);
+                root_inode.write_at(
+                    file_count * DIRENT_SZ,
+                    dirent.as_bytes(),
+                    &self.block_device,
+                );
+                0
+            }
+            else{
+                -1
+            }
+        })
+    }
+    ///取消硬链接  用空的索引写入
+    pub fn unlink_at(&self,name:&str)->isize{
+        // let mut fs = self.fs.lock();
+        // //有点问题- -
+        // self.modify_disk_inode(|root_inode|{
+        //     //找到路径对应的inode
+        //     let mut flag=0;
+        //     while true {
+        //         if let Some(_old_inode_id)=self.find_inode_id(path, root_inode){
+        //             let file_count = (root_inode.size as usize) / DIRENT_SZ;
+        //             let new_size = (file_count + 1) * DIRENT_SZ;
+        //             // increase size
+        //             self.increase_size(new_size as u32, root_inode, &mut fs);
+        //             // write dirent
+        //             let dirent = DirEntry::empty();
+        //             root_inode.write_at(
+        //                 file_count * DIRENT_SZ,
+        //                 dirent.as_bytes(),
+        //                 &self.block_device,
+        //             );
+        //             flag=1;
+        //         }
+        //         else{
+        //             break;
+        //         }
+        //     }
+        //     if flag==0{
+        //         return -1;
+        //     }
+        //     1
+        // })
+        let _fs = self.fs.lock();
+        self.modify_disk_inode(|disk_inode|{
+            assert!(disk_inode.is_dir());
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    disk_inode.read_at(
+                        DIRENT_SZ * i, 
+                        dirent.as_bytes_mut(), 
+                        &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    let tmp=DirEntry::empty();
+                    disk_inode.write_at(DIRENT_SZ*i, tmp.as_bytes(), &self.block_device);
+                    return 0;
+                }
+            }
+            -1
+        })
+    }
 }
