@@ -5,6 +5,8 @@ use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
 use crate::trap::TrapContext;
 use crate::{mm::PhysPageNum, sync::UPSafeCell};
 use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
+use alloc::vec;
 use core::cell::RefMut;
 
 /// Task control block structure
@@ -41,6 +43,14 @@ pub struct TaskControlBlockInner {
     pub task_status: TaskStatus,
     /// It is set when active exit or execution error occurs
     pub exit_code: Option<i32>,
+    /// mutex alloc[mutex_id] = alloced_num;
+    pub mutex_alloc: Vec<usize>,
+    /// mutex_neeed[mutex_id] = need_num
+    pub mutex_need: Vec<usize>,
+    /// sem_alloc[sem_id] = alloced num 
+    pub sem_alloc: Vec<usize>,
+    /// sem_need[sem_id] = need_num 
+    pub sem_need: Vec<usize>,
 }
 
 impl TaskControlBlockInner {
@@ -65,6 +75,9 @@ impl TaskControlBlock {
         let trap_cx_ppn = res.trap_cx_ppn();
         let kstack = kstack_alloc();
         let kstack_top = kstack.get_top();
+        let process_inner = process.inner_exclusive_access();
+        let mutex_num = process_inner.mutex_list.len();
+        let sem_num = process_inner.semaphore_list.len();
         Self {
             process: Arc::downgrade(&process),
             kstack,
@@ -75,6 +88,10 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    mutex_alloc: vec![0;mutex_num],
+                    mutex_need: vec![0;mutex_num],
+                    sem_alloc: vec![0;sem_num],
+                    sem_need: vec![0;sem_num],
                 })
             },
         }
